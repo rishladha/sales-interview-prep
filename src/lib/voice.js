@@ -1,9 +1,9 @@
-// Sarvam AI Voice Integration - Fixed Version
-// Supports Indian English and regional languages with excellent accuracy
+// Sarvam AI Voice Integration - Fixed Version 2
+// Supports Indian English and regional languages
 
 const SARVAM_API_KEY = import.meta.env.VITE_SARVAM_API_KEY
 
-// Speech-to-Text using Sarvam's Saaras v3 model
+// Speech-to-Text using Sarvam's API
 export async function transcribeAudio(audioBlob) {
   if (!SARVAM_API_KEY) {
     console.warn('Sarvam API key not found')
@@ -11,11 +11,15 @@ export async function transcribeAudio(audioBlob) {
   }
 
   try {
-    // Convert webm to proper format if needed
-    const formData = new FormData()
-    formData.append('file', audioBlob, 'recording.webm')
+    // Create a new blob with simple mime type (no codec specification)
+    const cleanBlob = new Blob([audioBlob], { type: 'audio/webm' })
     
-    // Only send file - let API use defaults
+    const formData = new FormData()
+    // Use .webm extension explicitly
+    formData.append('file', cleanBlob, 'recording.webm')
+    
+    console.log('Sending to Sarvam, blob size:', cleanBlob.size, 'type:', cleanBlob.type)
+
     const response = await fetch('https://api.sarvam.ai/speech-to-text', {
       method: 'POST',
       headers: {
@@ -95,7 +99,7 @@ export function playBase64Audio(base64Audio) {
   })
 }
 
-// Audio recorder class for capturing microphone input
+// Audio recorder class - records as simple webm
 export class AudioRecorder {
   constructor() {
     this.mediaRecorder = null
@@ -114,16 +118,11 @@ export class AudioRecorder {
         } 
       })
       
-      // Use webm format - Sarvam supports it
-      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
-        ? 'audio/webm;codecs=opus'
-        : MediaRecorder.isTypeSupported('audio/webm')
-        ? 'audio/webm'
-        : 'audio/mp4'
+      // Use simple webm without codec specification
+      this.mediaRecorder = new MediaRecorder(this.stream, { 
+        mimeType: 'audio/webm'
+      })
       
-      console.log('Using MIME type:', mimeType)
-      
-      this.mediaRecorder = new MediaRecorder(this.stream, { mimeType })
       this.audioChunks = []
       
       this.mediaRecorder.ondataavailable = (event) => {
@@ -133,7 +132,7 @@ export class AudioRecorder {
       }
       
       this.mediaRecorder.start(100)
-      console.log('Recording started')
+      console.log('Recording started with mimeType:', this.mediaRecorder.mimeType)
       return true
     } catch (error) {
       console.error('Failed to start recording:', error)
@@ -149,9 +148,9 @@ export class AudioRecorder {
       }
 
       this.mediaRecorder.onstop = () => {
-        const mimeType = this.mediaRecorder.mimeType
-        const audioBlob = new Blob(this.audioChunks, { type: mimeType })
-        console.log('Recording stopped, blob size:', audioBlob.size, 'type:', mimeType)
+        // Create blob with simple type
+        const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' })
+        console.log('Recording stopped, blob size:', audioBlob.size)
         
         if (this.stream) {
           this.stream.getTracks().forEach(track => track.stop())
