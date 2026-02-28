@@ -1,7 +1,14 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getSimulationResponse } from '../lib/ai'
-import { AudioRecorder, transcribeAudio, createBrowserSpeechRecognition, isSarvamAvailable } from '../lib/voice'
+import { 
+  AudioRecorder, 
+  transcribeAudio, 
+  synthesizeSpeech, 
+  playBase64Audio,
+  isSarvamAvailable,
+  createBrowserSpeechRecognition 
+} from '../lib/voice'
 
 export default function Simulation() {
   const [setup, setSetup] = useState(null)
@@ -10,11 +17,13 @@ export default function Simulation() {
   const [isListening, setIsListening] = useState(false)
   const [currentTranscript, setCurrentTranscript] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
   const [timeLeft, setTimeLeft] = useState(5 * 60)
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [hasEnded, setHasEnded] = useState(false)
   const [micError, setMicError] = useState(null)
   const [usingSarvam, setUsingSarvam] = useState(false)
+  const [voiceEnabled, setVoiceEnabled] = useState(true)
 
   const audioRecorderRef = useRef(null)
   const browserRecognitionRef = useRef(null)
@@ -35,26 +44,33 @@ export default function Simulation() {
     const parsedScenario = JSON.parse(storedScenario)
     setSetup(parsedSetup)
     setScenario(parsedScenario)
-    setUsingSarvam(isSarvamAvailable())
-
-    // Start with AI's opening line
-    if (parsedScenario.openingLine) {
-      setMessages([{ role: 'ai', content: parsedScenario.openingLine }])
-    } else {
-      setMessages([{ role: 'ai', content: 'Hello?' }])
-    }
-    setIsTimerRunning(true)
+    
+    const sarvamAvailable = isSarvamAvailable()
+    setUsingSarvam(sarvamAvailable)
+    console.log('Sarvam available:', sarvamAvailable)
 
     // Check microphone permissions
     navigator.mediaDevices.getUserMedia({ audio: true })
-      .then(() => setMicError(null))
+      .then(() => {
+        console.log('Microphone access granted')
+        setMicError(null)
+      })
       .catch((err) => {
         console.error('Mic error:', err)
-        setMicError('Microphone access denied. Please allow microphone access to use voice.')
+        setMicError('Microphone access denied. Please allow microphone access.')
       })
 
+    // Start with AI's opening line
+    const openingLine = parsedScenario.openingLine || 'Hello?'
+    setMessages([{ role: 'ai', content: openingLine }])
+    setIsTimerRunning(true)
+
+    // Speak the opening line
+    if (sarvamAvailable) {
+      speakText(openingLine)
+    }
+
     return () => {
-      // Cleanup
       if (audioRecorderRef.current) {
         audioRecorderRef.current.stop()
       }
@@ -82,8 +98,24 @@ export default function Simulation() {
 
   const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
 
+  // Speak text using Sarvam TTS
+  const speakText = async (text) => {
+    if (!voiceEnabled || !usingSarvam) return
+    
+    setIsSpeaking(true)
+    try {
+      const audioBase64 = await synthesizeSpeech(text, 'aditya')
+      if (audioBase64) {
+        await playBase64Audio(audioBase64)
+      }
+    } catch (error) {
+      console.error('TTS error:', error)
+    }
+    setIsSpeaking(false)
+  }
+
   const startListening = async () => {
-    if (hasEnded || isProcessing || micError) return
+    if (hasEnded || isProcessing || isSpeaking || micError) return
 
     setIsListening(true)
     setCurrentTranscript('')
@@ -115,7 +147,7 @@ export default function Simulation() {
           browserRecognitionRef.current.start()
         } catch (e) {
           console.error('Recognition start error:', e)
-          setMicError('Speech recognition not supported in this browser. Try Chrome.')
+          setMicError('Speech recognition not supported. Try Chrome.')
           setIsListening(false)
         }
       } else {
@@ -130,20 +162,27 @@ export default function Simulation() {
 
     if (usingSarvam && audioRecorderRef.current) {
       // Stop recording and transcribe with Sarvam
+      setCurrentTranscript('Transcribing...')
+      setIsProcessing(true)
+      
       const audioBlob = await audioRecorderRef.current.stop()
-      if (audioBlob) {
-        setIsProcessing(true)
-        setCurrentTranscript('Transcribing...')
-        
+      
+      if (audioBlob && audioBlob.size > 0) {
+        console.log('Audio blob size:', audioBlob.size)
         const transcript = await transcribeAudio(audioBlob)
         setCurrentTranscript('')
         
         if (transcript) {
+          console.log('Transcript:', transcript)
           await sendMessage(transcript)
         } else {
+          console.error('No transcript received')
           setIsProcessing(false)
-          setMicError('Failed to transcribe. Please try again.')
+          setMicError('Could not transcribe. Try speaking louder or use text input.')
         }
+      } else {
+        setCurrentTranscript('')
+        setIsProcessing(false)
       }
     } else if (browserRecognitionRef.current) {
       browserRecognitionRef.current.stop()
@@ -169,9 +208,15 @@ export default function Simulation() {
       )
 
       setMessages((prev) => [...prev, { role: 'ai', content: response }])
+      
+      // Speak the AI response
+      if (voiceEnabled && usingSarvam) {
+        await speakText(response)
+      }
     } catch (error) {
       console.error('Response error:', error)
-      setMessages((prev) => [...prev, { role: 'ai', content: "I see. Go on..." }])
+      const fallbackResponse = "I see. Go on..."
+      setMessages((prev) => [...prev, { role: 'ai', content: fallbackResponse }])
     }
 
     setIsProcessing(false)
@@ -183,7 +228,6 @@ export default function Simulation() {
     setIsTimerRunning(false)
     setIsListening(false)
 
-    // Stop any ongoing recording
     if (audioRecorderRef.current) {
       audioRecorderRef.current.stop()
     }
@@ -191,7 +235,6 @@ export default function Simulation() {
       browserRecognitionRef.current.stop()
     }
 
-    // Store data for feedback
     sessionStorage.setItem('simulationMessages', JSON.stringify(messages))
     sessionStorage.setItem('simulationDuration', String(5 * 60 - timeLeft))
 
@@ -227,6 +270,14 @@ export default function Simulation() {
           <p className="text-white font-medium">{setup.companyName}</p>
         </div>
         <div className="flex items-center gap-4">
+          {/* Voice toggle */}
+          <button
+            onClick={() => setVoiceEnabled(!voiceEnabled)}
+            className={`p-2 rounded-lg transition-colors ${voiceEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}
+            title={voiceEnabled ? 'Voice on' : 'Voice off'}
+          >
+            {voiceEnabled ? '🔊' : '🔇'}
+          </button>
           <div className={`text-2xl font-mono tabular-nums ${
             timeLeft < 60 ? 'text-red-400 animate-pulse' :
             timeLeft < 120 ? 'text-amber-400' : 'text-emerald-400'
@@ -260,13 +311,18 @@ export default function Simulation() {
           </div>
         ))}
 
-        {isProcessing && (
+        {(isProcessing || isSpeaking) && (
           <div className="flex justify-start animate-fadeIn">
             <div className="bg-slate-800 rounded-2xl px-5 py-3">
-              <div className="flex gap-1.5">
-                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" />
-                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
-                <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
+              <div className="flex items-center gap-2">
+                <div className="flex gap-1.5">
+                  <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" />
+                  <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
+                  <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
+                </div>
+                <span className="text-xs text-slate-500">
+                  {isSpeaking ? 'Speaking...' : 'Thinking...'}
+                </span>
               </div>
             </div>
           </div>
@@ -290,7 +346,10 @@ export default function Simulation() {
           <div className="bg-red-500/20 rounded-xl px-4 py-2 text-red-400 text-sm flex items-center justify-between">
             <span>{micError}</span>
             <button 
-              onClick={() => setShowTextInput(true)}
+              onClick={() => {
+                setShowTextInput(true)
+                setMicError(null)
+              }}
               className="text-red-300 underline ml-2"
             >
               Type instead
@@ -309,11 +368,11 @@ export default function Simulation() {
               onChange={(e) => setTextInput(e.target.value)}
               placeholder="Type your response..."
               className="flex-1 px-4 py-3 bg-slate-800 text-white rounded-xl border border-slate-700 focus:border-indigo-500 focus:outline-none"
-              disabled={isProcessing || hasEnded}
+              disabled={isProcessing || hasEnded || isSpeaking}
             />
             <button
               type="submit"
-              disabled={!textInput.trim() || isProcessing || hasEnded}
+              disabled={!textInput.trim() || isProcessing || hasEnded || isSpeaking}
               className="px-6 py-3 bg-indigo-500 text-white rounded-xl font-medium disabled:opacity-50"
             >
               Send
@@ -327,21 +386,29 @@ export default function Simulation() {
         <div className="flex flex-col items-center">
           <button
             onClick={isListening ? stopListening : startListening}
-            disabled={isProcessing || hasEnded || !!micError}
+            disabled={isProcessing || hasEnded || isSpeaking || !!micError}
             className={`w-20 h-20 rounded-full flex items-center justify-center transition-all relative ${
               isListening
                 ? 'bg-red-500 shadow-lg shadow-red-500/50'
+                : isSpeaking
+                ? 'bg-emerald-500 shadow-lg shadow-emerald-500/50'
                 : 'bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-purple-500/30 hover:shadow-xl hover:scale-105'
             } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100`}
           >
             {isListening && (
               <div className="absolute inset-0 rounded-full bg-red-400/30 animate-ping" />
             )}
-            <span className="text-3xl relative z-10">{isListening ? '⏹️' : '🎤'}</span>
+            {isSpeaking && (
+              <div className="absolute inset-0 rounded-full bg-emerald-400/30 animate-pulse" />
+            )}
+            <span className="text-3xl relative z-10">
+              {isSpeaking ? '🔊' : isListening ? '⏹️' : '🎤'}
+            </span>
           </button>
           
           <p className="text-slate-400 text-sm mt-3">
             {hasEnded ? 'Simulation ended' :
+             isSpeaking ? 'AI is speaking...' :
              isProcessing ? 'Processing...' :
              isListening ? 'Listening... tap to send' :
              micError ? 'Mic unavailable' :
@@ -360,7 +427,7 @@ export default function Simulation() {
 
           {/* Voice mode indicator */}
           <p className="text-slate-600 text-xs mt-2">
-            {usingSarvam ? '🇮🇳 Sarvam AI' : '🌐 Browser Speech'}
+            {usingSarvam ? '🇮🇳 Sarvam AI (Speech-to-Speech)' : '🌐 Browser Speech'}
           </p>
         </div>
       </div>
