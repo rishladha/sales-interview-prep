@@ -1,22 +1,27 @@
 import { createContext, useContext, useEffect, useState } from 'react'
-import { supabase } from '../lib/supabase'
+import { supabase, isCoach } from '../lib/supabase'
 
 const AuthContext = createContext({})
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [userIsCoach, setUserIsCoach] = useState(false)
 
   useEffect(() => {
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
+      const currentUser = session?.user ?? null
+      setUser(currentUser)
+      setUserIsCoach(isCoach(currentUser?.email))
       setLoading(false)
     })
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null)
+      const currentUser = session?.user ?? null
+      setUser(currentUser)
+      setUserIsCoach(isCoach(currentUser?.email))
     })
 
     return () => subscription.unsubscribe()
@@ -38,17 +43,22 @@ export function AuthProvider({ children }) {
       email,
       password,
     })
+    if (data?.user) {
+      setUserIsCoach(isCoach(data.user.email))
+    }
     return { data, error }
   }
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut()
+    setUserIsCoach(false)
     return { error }
   }
 
   const value = {
     user,
     loading,
+    isCoach: userIsCoach,
     signUp,
     signIn,
     signOut,
