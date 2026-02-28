@@ -1,4 +1,4 @@
-// Sarvam AI Voice Integration
+// Sarvam AI Voice Integration - Fixed Version
 // Supports Indian English and regional languages with excellent accuracy
 
 const SARVAM_API_KEY = import.meta.env.VITE_SARVAM_API_KEY
@@ -6,16 +6,16 @@ const SARVAM_API_KEY = import.meta.env.VITE_SARVAM_API_KEY
 // Speech-to-Text using Sarvam's Saaras v3 model
 export async function transcribeAudio(audioBlob) {
   if (!SARVAM_API_KEY) {
-    console.warn('Sarvam API key not found, falling back to browser speech recognition')
+    console.warn('Sarvam API key not found')
     return null
   }
 
   try {
+    // Convert webm to proper format if needed
     const formData = new FormData()
-    formData.append('file', audioBlob, 'audio.webm')
-    formData.append('model', 'saaras:v3')
-    formData.append('language_code', 'en-IN')
-
+    formData.append('file', audioBlob, 'recording.webm')
+    
+    // Only send file - let API use defaults
     const response = await fetch('https://api.sarvam.ai/speech-to-text', {
       method: 'POST',
       headers: {
@@ -25,21 +25,22 @@ export async function transcribeAudio(audioBlob) {
     })
 
     if (!response.ok) {
-      const error = await response.json()
-      console.error('Sarvam STT error:', error)
+      const errorText = await response.text()
+      console.error('Sarvam STT error:', response.status, errorText)
       return null
     }
 
     const data = await response.json()
-    return data.transcript || data.text || null
+    console.log('Sarvam STT response:', data)
+    return data.transcript || null
   } catch (error) {
     console.error('Sarvam transcription error:', error)
     return null
   }
 }
 
-// Text-to-Speech using Sarvam's Bulbul model
-export async function synthesizeSpeech(text, voice = 'meera') {
+// Text-to-Speech using Sarvam's Bulbul v3 model
+export async function synthesizeSpeech(text, speaker = 'aditya') {
   if (!SARVAM_API_KEY) {
     console.warn('Sarvam API key not found')
     return null
@@ -55,21 +56,21 @@ export async function synthesizeSpeech(text, voice = 'meera') {
       body: JSON.stringify({
         inputs: [text],
         target_language_code: 'en-IN',
-        speaker: voice,
-        model: 'bulbul:v1',
+        speaker: speaker,
+        model: 'bulbul:v3',
       }),
     })
 
     if (!response.ok) {
-      const error = await response.json()
-      console.error('Sarvam TTS error:', error)
+      const errorText = await response.text()
+      console.error('Sarvam TTS error:', response.status, errorText)
       return null
     }
 
     const data = await response.json()
+    console.log('Sarvam TTS response:', data)
     
     if (data.audios && data.audios[0]) {
-      // Return base64 audio data
       return data.audios[0]
     }
     
@@ -113,10 +114,16 @@ export class AudioRecorder {
         } 
       })
       
-      this.mediaRecorder = new MediaRecorder(this.stream, {
-        mimeType: 'audio/webm;codecs=opus'
-      })
+      // Use webm format - Sarvam supports it
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') 
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+        ? 'audio/webm'
+        : 'audio/mp4'
       
+      console.log('Using MIME type:', mimeType)
+      
+      this.mediaRecorder = new MediaRecorder(this.stream, { mimeType })
       this.audioChunks = []
       
       this.mediaRecorder.ondataavailable = (event) => {
@@ -125,7 +132,8 @@ export class AudioRecorder {
         }
       }
       
-      this.mediaRecorder.start(100) // Collect data every 100ms
+      this.mediaRecorder.start(100)
+      console.log('Recording started')
       return true
     } catch (error) {
       console.error('Failed to start recording:', error)
@@ -141,9 +149,10 @@ export class AudioRecorder {
       }
 
       this.mediaRecorder.onstop = () => {
-        const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' })
+        const mimeType = this.mediaRecorder.mimeType
+        const audioBlob = new Blob(this.audioChunks, { type: mimeType })
+        console.log('Recording stopped, blob size:', audioBlob.size, 'type:', mimeType)
         
-        // Stop all tracks
         if (this.stream) {
           this.stream.getTracks().forEach(track => track.stop())
         }
@@ -163,6 +172,7 @@ export class AudioRecorder {
 // Browser fallback speech recognition
 export function createBrowserSpeechRecognition(onResult, onEnd) {
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+    console.warn('Browser speech recognition not supported')
     return null
   }
 
