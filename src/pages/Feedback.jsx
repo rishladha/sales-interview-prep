@@ -20,7 +20,7 @@ export default function Feedback() {
       const duration = parseInt(sessionStorage.getItem('simulationDuration') || '0')
       const researchScore = sessionStorage.getItem('researchScore')
 
-      if (!setup.role || messages.length < 2) {
+    if (!setup.roleType || messages.length < 1) {
         navigate('/setup')
         return
       }
