@@ -4,8 +4,6 @@ import { getSimulationResponse } from '../lib/ai'
 import { 
   AudioRecorder, 
   transcribeAudio, 
-  synthesizeSpeech, 
-  playBase64Audio,
   isSarvamAvailable,
   createBrowserSpeechRecognition 
 } from '../lib/voice'
@@ -17,13 +15,11 @@ export default function Simulation() {
   const [isListening, setIsListening] = useState(false)
   const [currentTranscript, setCurrentTranscript] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
-  const [isSpeaking, setIsSpeaking] = useState(false)
   const [timeLeft, setTimeLeft] = useState(5 * 60)
   const [isTimerRunning, setIsTimerRunning] = useState(false)
   const [hasEnded, setHasEnded] = useState(false)
   const [micError, setMicError] = useState(null)
   const [usingSarvam, setUsingSarvam] = useState(false)
-  const [voiceEnabled, setVoiceEnabled] = useState(true)
 
   const audioRecorderRef = useRef(null)
   const browserRecognitionRef = useRef(null)
@@ -60,15 +56,10 @@ export default function Simulation() {
         setMicError('Microphone access denied. Please allow microphone access.')
       })
 
-    // Start with AI's opening line
+    // Start with AI's opening line (clean dialogue, no stage directions)
     const openingLine = parsedScenario.openingLine || 'Hello?'
     setMessages([{ role: 'ai', content: openingLine }])
     setIsTimerRunning(true)
-
-    // Speak the opening line
-    if (sarvamAvailable) {
-      speakText(openingLine)
-    }
 
     return () => {
       if (audioRecorderRef.current) {
@@ -98,24 +89,8 @@ export default function Simulation() {
 
   const formatTime = (s) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
 
-  // Speak text using Sarvam TTS
-  const speakText = async (text) => {
-    if (!voiceEnabled || !usingSarvam) return
-    
-    setIsSpeaking(true)
-    try {
-      const audioBase64 = await synthesizeSpeech(text, 'aditya')
-      if (audioBase64) {
-        await playBase64Audio(audioBase64)
-      }
-    } catch (error) {
-      console.error('TTS error:', error)
-    }
-    setIsSpeaking(false)
-  }
-
   const startListening = async () => {
-    if (hasEnded || isProcessing || isSpeaking || micError) return
+    if (hasEnded || isProcessing || micError) return
 
     setIsListening(true)
     setCurrentTranscript('')
@@ -207,16 +182,17 @@ export default function Simulation() {
         setup.productContext
       )
 
-      setMessages((prev) => [...prev, { role: 'ai', content: response }])
-      
-      // Speak the AI response
-      if (voiceEnabled && usingSarvam) {
-        await speakText(response)
-      }
+      // Clean any accidental stage directions from response
+      const cleanResponse = response
+        .replace(/\*[^*]+\*/g, '') // Remove *actions*
+        .replace(/\([^)]+\)/g, '') // Remove (parentheticals)
+        .replace(/\[[^\]]+\]/g, '') // Remove [brackets]
+        .trim()
+
+      setMessages((prev) => [...prev, { role: 'ai', content: cleanResponse || response }])
     } catch (error) {
       console.error('Response error:', error)
-      const fallbackResponse = "I see. Go on..."
-      setMessages((prev) => [...prev, { role: 'ai', content: fallbackResponse }])
+      setMessages((prev) => [...prev, { role: 'ai', content: "I see. Go on..." }])
     }
 
     setIsProcessing(false)
@@ -266,18 +242,10 @@ export default function Simulation() {
       {/* Header */}
       <div className="px-6 py-4 flex items-center justify-between border-b border-slate-800 bg-slate-900/95 backdrop-blur-sm">
         <div className="flex-1">
-          <p className="text-slate-400 text-sm">{scenario.personName}</p>
+          <p className="text-slate-400 text-sm">{scenario.personName}, {scenario.personTitle}</p>
           <p className="text-white font-medium">{setup.companyName}</p>
         </div>
         <div className="flex items-center gap-4">
-          {/* Voice toggle */}
-          <button
-            onClick={() => setVoiceEnabled(!voiceEnabled)}
-            className={`p-2 rounded-lg transition-colors ${voiceEnabled ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'}`}
-            title={voiceEnabled ? 'Voice on' : 'Voice off'}
-          >
-            {voiceEnabled ? '🔊' : '🔇'}
-          </button>
           <div className={`text-2xl font-mono tabular-nums ${
             timeLeft < 60 ? 'text-red-400 animate-pulse' :
             timeLeft < 120 ? 'text-amber-400' : 'text-emerald-400'
@@ -289,9 +257,16 @@ export default function Simulation() {
             disabled={hasEnded}
             className="px-4 py-2 bg-red-500/20 text-red-400 rounded-xl text-sm font-medium hover:bg-red-500/30 transition-colors disabled:opacity-50"
           >
-            End
+            End Call
           </button>
         </div>
+      </div>
+
+      {/* Scenario reminder */}
+      <div className="px-6 py-2 bg-slate-800/50 border-b border-slate-700">
+        <p className="text-xs text-slate-400">
+          <span className="text-amber-400 font-medium">Objective:</span> {scenario.objective}
+        </p>
       </div>
 
       {/* Messages */}
@@ -306,12 +281,15 @@ export default function Simulation() {
               {msg.role === 'ai' && (
                 <p className="text-xs text-slate-400 mb-1">{scenario.personName}</p>
               )}
+              {msg.role === 'user' && (
+                <p className="text-xs text-indigo-200 mb-1">You</p>
+              )}
               <p className="text-sm leading-relaxed">{msg.content}</p>
             </div>
           </div>
         ))}
 
-        {(isProcessing || isSpeaking) && (
+        {isProcessing && (
           <div className="flex justify-start animate-fadeIn">
             <div className="bg-slate-800 rounded-2xl px-5 py-3">
               <div className="flex items-center gap-2">
@@ -320,9 +298,7 @@ export default function Simulation() {
                   <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '0.15s' }} />
                   <div className="w-2 h-2 bg-slate-500 rounded-full animate-bounce" style={{ animationDelay: '0.3s' }} />
                 </div>
-                <span className="text-xs text-slate-500">
-                  {isSpeaking ? 'Speaking...' : 'Thinking...'}
-                </span>
+                <span className="text-xs text-slate-500">Responding...</span>
               </div>
             </div>
           </div>
@@ -368,11 +344,12 @@ export default function Simulation() {
               onChange={(e) => setTextInput(e.target.value)}
               placeholder="Type your response..."
               className="flex-1 px-4 py-3 bg-slate-800 text-white rounded-xl border border-slate-700 focus:border-indigo-500 focus:outline-none"
-              disabled={isProcessing || hasEnded || isSpeaking}
+              disabled={isProcessing || hasEnded}
+              autoFocus
             />
             <button
               type="submit"
-              disabled={!textInput.trim() || isProcessing || hasEnded || isSpeaking}
+              disabled={!textInput.trim() || isProcessing || hasEnded}
               className="px-6 py-3 bg-indigo-500 text-white rounded-xl font-medium disabled:opacity-50"
             >
               Send
@@ -386,29 +363,23 @@ export default function Simulation() {
         <div className="flex flex-col items-center">
           <button
             onClick={isListening ? stopListening : startListening}
-            disabled={isProcessing || hasEnded || isSpeaking || !!micError}
+            disabled={isProcessing || hasEnded || !!micError}
             className={`w-20 h-20 rounded-full flex items-center justify-center transition-all relative ${
               isListening
                 ? 'bg-red-500 shadow-lg shadow-red-500/50'
-                : isSpeaking
-                ? 'bg-emerald-500 shadow-lg shadow-emerald-500/50'
                 : 'bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-purple-500/30 hover:shadow-xl hover:scale-105'
             } disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100`}
           >
             {isListening && (
               <div className="absolute inset-0 rounded-full bg-red-400/30 animate-ping" />
             )}
-            {isSpeaking && (
-              <div className="absolute inset-0 rounded-full bg-emerald-400/30 animate-pulse" />
-            )}
             <span className="text-3xl relative z-10">
-              {isSpeaking ? '🔊' : isListening ? '⏹️' : '🎤'}
+              {isListening ? '⏹️' : '🎤'}
             </span>
           </button>
           
           <p className="text-slate-400 text-sm mt-3">
-            {hasEnded ? 'Simulation ended' :
-             isSpeaking ? 'AI is speaking...' :
+            {hasEnded ? 'Call ended' :
              isProcessing ? 'Processing...' :
              isListening ? 'Listening... tap to send' :
              micError ? 'Mic unavailable' :
@@ -427,7 +398,7 @@ export default function Simulation() {
 
           {/* Voice mode indicator */}
           <p className="text-slate-600 text-xs mt-2">
-            {usingSarvam ? '🇮🇳 Sarvam AI (Speech-to-Speech)' : '🌐 Browser Speech'}
+            {usingSarvam ? '🇮🇳 Sarvam AI' : '🌐 Browser Speech'}
           </p>
         </div>
       </div>
