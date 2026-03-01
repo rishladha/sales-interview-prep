@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
 import { generateFeedback, SCORING_FRAMEWORKS } from '../lib/ai'
-import { saveInterview } from '../lib/supabase'
 import { checkBadges, calculateOverallLevel, getNextRecommendation } from '../lib/gamification'
 
 export default function Feedback() {
@@ -36,21 +35,6 @@ export default function Feedback() {
         )
         setFeedback(result)
 
-        // Save to database
-        if (user) {
-          await saveInterview(user.id, {
-            role: setup.role,
-            simulation_type: setup.simulationType,
-            company: setup.companyName,
-            score: result.overall,
-            grade: result.grade,
-            passed: result.passed,
-            feedback: result,
-            messages: messages,
-            duration: duration,
-            research_score: researchScore ? parseInt(researchScore) : null
-          })
-        }
       } catch (error) {
         console.error('Feedback error:', error)
         setFeedback({
