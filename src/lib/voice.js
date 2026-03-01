@@ -1,5 +1,5 @@
-// Sarvam AI Voice Integration - Fixed Version 2
-// Supports Indian English and regional languages
+// Sarvam AI Voice Integration - STT Only (No TTS)
+// Fixed audio format for Sarvam API
 
 const SARVAM_API_KEY = import.meta.env.VITE_SARVAM_API_KEY
 
@@ -11,11 +11,11 @@ export async function transcribeAudio(audioBlob) {
   }
 
   try {
-    // Create a new blob with simple mime type (no codec specification)
+    // Create a clean blob with simple mime type (no codec specification)
+    // Sarvam doesn't accept "audio/webm;codecs=opus", only "audio/webm"
     const cleanBlob = new Blob([audioBlob], { type: 'audio/webm' })
     
     const formData = new FormData()
-    // Use .webm extension explicitly
     formData.append('file', cleanBlob, 'recording.webm')
     
     console.log('Sending to Sarvam, blob size:', cleanBlob.size, 'type:', cleanBlob.type)
@@ -43,62 +43,6 @@ export async function transcribeAudio(audioBlob) {
   }
 }
 
-// Text-to-Speech using Sarvam's Bulbul v3 model
-export async function synthesizeSpeech(text, speaker = 'aditya') {
-  if (!SARVAM_API_KEY) {
-    console.warn('Sarvam API key not found')
-    return null
-  }
-
-  try {
-    const response = await fetch('https://api.sarvam.ai/text-to-speech', {
-      method: 'POST',
-      headers: {
-        'api-subscription-key': SARVAM_API_KEY,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        inputs: [text],
-        target_language_code: 'en-IN',
-        speaker: speaker,
-        model: 'bulbul:v3',
-      }),
-    })
-
-    if (!response.ok) {
-      const errorText = await response.text()
-      console.error('Sarvam TTS error:', response.status, errorText)
-      return null
-    }
-
-    const data = await response.json()
-    console.log('Sarvam TTS response:', data)
-    
-    if (data.audios && data.audios[0]) {
-      return data.audios[0]
-    }
-    
-    return null
-  } catch (error) {
-    console.error('Sarvam TTS error:', error)
-    return null
-  }
-}
-
-// Play audio from base64
-export function playBase64Audio(base64Audio) {
-  return new Promise((resolve, reject) => {
-    try {
-      const audio = new Audio(`data:audio/wav;base64,${base64Audio}`)
-      audio.onended = resolve
-      audio.onerror = reject
-      audio.play()
-    } catch (error) {
-      reject(error)
-    }
-  })
-}
-
 // Audio recorder class - records as simple webm
 export class AudioRecorder {
   constructor() {
@@ -119,10 +63,19 @@ export class AudioRecorder {
       })
       
       // Use simple webm without codec specification
-      this.mediaRecorder = new MediaRecorder(this.stream, { 
-        mimeType: 'audio/webm'
-      })
+      // This is important - Sarvam rejects "audio/webm;codecs=opus"
+      let mimeType = 'audio/webm'
       
+      // Fallback for browsers that don't support plain webm
+      if (!MediaRecorder.isTypeSupported(mimeType)) {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          mimeType = 'audio/webm;codecs=opus'
+        } else if (MediaRecorder.isTypeSupported('audio/mp4')) {
+          mimeType = 'audio/mp4'
+        }
+      }
+      
+      this.mediaRecorder = new MediaRecorder(this.stream, { mimeType })
       this.audioChunks = []
       
       this.mediaRecorder.ondataavailable = (event) => {
@@ -148,7 +101,7 @@ export class AudioRecorder {
       }
 
       this.mediaRecorder.onstop = () => {
-        // Create blob with simple type
+        // Always create blob with simple type (Sarvam requirement)
         const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' })
         console.log('Recording stopped, blob size:', audioBlob.size)
         
